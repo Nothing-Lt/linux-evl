@@ -213,7 +213,7 @@ static const struct irq_chip gpio_rcar_irq_chip = {
 	.irq_set_type	= gpio_rcar_irq_set_type,
 	.irq_set_wake	= gpio_rcar_irq_set_wake,
 	.flags		= IRQCHIP_IMMUTABLE | IRQCHIP_SET_TYPE_MASKED |
-			  IRQCHIP_MASK_ON_SUSPEND,
+			  IRQCHIP_MASK_ON_SUSPEND | IRQCHIP_PIPELINE_SAFE,
 	GPIOCHIP_IRQ_RESOURCE_HELPERS,
 };
 
