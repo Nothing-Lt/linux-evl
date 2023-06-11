@@ -2172,8 +2172,14 @@ static void sci_shutdown(struct uart_port *port)
 	struct sci_port *s = to_sci_port(port);
 	unsigned long flags;
 	u16 scr;
+	int i;
 
 	dev_dbg(port->dev, "%s(%d)\n", __func__, port->line);
+
+	if (IS_ENABLED(CONFIG_RAW_PRINTK))
+		for (i = 0; i < SCI_NUM_CLKS; i++) {
+			clk_disable(s->clks[i]);
+		}
 
 	s->autorts = false;
 	mctrl_gpio_disable_ms(to_sci_port(port)->gpios);
@@ -2975,6 +2981,39 @@ static void serial_console_putchar(struct uart_port *port, unsigned char ch)
 	sci_poll_put_char(port, ch);
 }
 
+#ifdef CONFIG_RAW_PRINTK
+
+static void
+serial_console_write_raw(struct console *co, const char *s, unsigned int count)
+{
+	struct sci_port *sci_port = &sci_ports[co->index];
+	struct uart_port *port = &sci_port->port;
+	unsigned short bits, ctrl, ctrl_temp;
+
+	/* first save SCSCR then disable interrupts, keep clock source */
+	ctrl = serial_port_in(port, SCSCR);
+	ctrl_temp = SCSCR_RE | SCSCR_TE |
+		    (sci_port->cfg->scscr & ~(SCSCR_CKE1 | SCSCR_CKE0)) |
+		    (ctrl & (SCSCR_CKE1 | SCSCR_CKE0));
+	serial_port_out(port, SCSCR, ctrl_temp | sci_port->hscif_tot);
+
+	while (count-- > 0) {
+		if (*s == '\n')
+			sci_poll_put_char(port, '\r');
+		sci_poll_put_char(port, *s++);
+	}
+
+	/* wait until fifo is empty and last bit has been transmitted */
+	bits = SCxSR_TDxE(port) | SCxSR_TEND(port);
+	while ((serial_port_in(port, SCxSR) & bits) != bits)
+		cpu_relax();
+
+	/* restore the SCSCR */
+	serial_port_out(port, SCSCR, ctrl);
+}
+
+#endif  /* !CONFIG_RAW_PRINTK */
+
 /*
  *	Print a string to the serial port trying not to disturb
  *	any possible real use of the port...
@@ -3025,6 +3064,7 @@ static int serial_console_setup(struct console *co, char *options)
 	int parity = 'n';
 	int flow = 'n';
 	int ret;
+	int i;
 
 	/*
 	 * Refuse to handle any bogus ports.
@@ -3048,6 +3088,11 @@ static int serial_console_setup(struct console *co, char *options)
 	if (options)
 		uart_parse_options(options, &baud, &parity, &bits, &flow);
 
+	if (IS_ENABLED(CONFIG_RAW_PRINTK))
+		for (i = 0; i < SCI_NUM_CLKS; i++) {
+			clk_enable(sci_port->clks[i]);
+		}
+
 	return uart_set_options(port, co, baud, parity, bits, flow);
 }
 
@@ -3056,6 +3101,9 @@ static struct console serial_console = {
 	.device		= uart_console_device,
 	.write		= serial_console_write,
 	.setup		= serial_console_setup,
+#ifdef CONSOLE_RAW_PRINTK
+	.write_raw	= pl011_console_write_raw,
+#endif
 	.flags		= CON_PRINTBUFFER,
 	.index		= -1,
 	.data		= &sci_uart_driver,
